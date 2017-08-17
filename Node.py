@@ -5,6 +5,7 @@ class Node:
 	def __init__(self, key, feature_vector=None, is_root=False):
 		self.key = key
 		self.is_root = is_root
+
 		''' 
 		Definition of Feature Vector:
 		Index	:	Description
@@ -16,13 +17,16 @@ class Node:
 		self.score = 0.0
 
 		self.parent = None
-		self.children = 0
+		self.num_children = 0
+		self.children = list()
 		self.depth = len(key)
 
 		if feature_vector:
 			self.feature_vector = feature_vector
 		else:
 			self.feature_vector = [0, 0, 0]
+
+		self.visited = False
 
 
 	def __str__(self):
@@ -34,11 +38,23 @@ class Node:
 
 
 	def calculate_score(self):
-		self.score = sqrt(sum(self.feature_vector + [self.depth]) / len(self.feature_vector))
+		self.score = sqrt(self.depth) / len(self.feature_vector)
 
 
 	def print_info(self):
 		print("Key: {}, Score: {}".format(self.key, self.score))
+
+
+	def get_parent(self):
+		return self.parent
+
+
+	def get_children(self):
+		return self.children
+
+
+	def is_leaf(self):	
+		return len(self.children) == 0
 
 
 	def serialize(self):

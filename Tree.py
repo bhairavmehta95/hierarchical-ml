@@ -1,26 +1,37 @@
 import pygtrie
 import re
+import csv
+import logging
+
 from Node import Node
 
 
 class Tree:
-    def __init__(self, country_iso, country_code):
-        self.country_iso = country_iso
-        self.country_code = country_code
-        self.tree = pygtrie.CharTrie()
+    def __init__(self, 
+        tree_name, root_key, 
+        feature_descriptions=None,
+        aggregate_numerical_features=False):
 
-        # Construct node with country code as root
-        root = Node(country_code, is_root=True)
+        self.tree_name = tree_name
+        self.root_key = root_key
+        self.tree = pygtrie.CharTrie()
+        self.aggregate_numerical_features = aggregate_numerical_features
+
+        self.data = list()
+
+        # Construct root node
+        root = Node(root_key, is_root=True)
         self.insert_node(root)
 
-
-    def create_node(self, key, parent):
+    
+    def create_node(self, key, features, score, parent):
         if self.tree.has_key(unicode(key)):
             return self.tree[unicode(key)]
 
-        n = Node(key)
+        n = Node(key, feature_vector=features)
         n.parent = parent
-        n.parent.children += 1
+        parent.children.append(n)
+        n.parent.num_children += 1
         self.insert_node(n)
 
         return self.tree[unicode(key)]
@@ -33,15 +44,20 @@ class Tree:
         self.tree[unicode(node.key)] = node
 
 
-    def get_node(self, key):
+    def get_node_by_key(self, key):
         if self.tree.has_key(unicode(key)):
             return self.tree[unicode(key)]
         else:
+            logging.warn("No node with key: {} in tree.".format(key))
             return None
 
 
     def delete_node_by_key(self, key, recursive=True):
-        assert key is not self.country_code # Can't delete root
+        try:
+            assert key is not self.root_key # Can't delete root
+        except AssertionError:
+            logging.error("Cannot delete root.")
+            exit(1)
 
         if not self.tree.has_key(key):
             return
@@ -60,89 +76,133 @@ class Tree:
                 pass
 
 
-    def insert_phone_number(self, number):
-        assert number.find(self.country_code) is not -1
+    def get_items_by_key_references(self, key):
+        try:
+            items = self.tree.items(key)
+        except:
+            items = list()
 
-        # remove all nonalphanum. chars from number
-        number = re.sub(r'\W+', '', number)
+        return [item[1] for item in items]
 
-        idx_end = number.find(self.country_code) + len(self.country_code) + 1
+
+    def get_items_by_key(self, key):
+        try:
+            items = self.tree.items(key)
+        except:
+            items = list()
+
+        return [item[0] for item in items]
+
+
+    def insert_entry(self, key, features, score):
+        assert key.find(self.root_key) is not -1
+
+        # remove all nonalphanum. chars from key
+        key = re.sub(r'\W+', '', key)
+
+        idx_end = key.find(self.root_key) + len(self.root_key) + 1
         
-        parent = self.tree[unicode(self.country_code)]
+        parent = self.tree[unicode(self.root_key)]
         
-        while idx_end <= len(number):
-            key = number[0:idx_end]
-            new = self.create_node(key, parent=parent)
-            parent = new
+        while idx_end <= len(key):
+            prefix = key[0:idx_end]
+
+            new_node = self.create_node(prefix, features, score, parent)
+            parent = new_node
             idx_end += 1
 
 
-    def delete_phone_number(self, number):
-        idx_end = len(number)
+    def delete_entry(self, key):
+        idx_end = len(key)
 
-        while idx_end > len(self.country_code):
-            key = number[0:idx_end]
+        while idx_end > len(self.root_key):
+            key = key[0:idx_end]
             
             if not self.tree.has_key(unicode(key)):
                 return 
 
             parent = self.tree[unicode(key)].parent
-            self.delete_node_by_key(key, recursive=False)
-            parent.children -= 1
+            parent.num_children -= 1
+            parent.children.remove(self.tree[unicode(key)])
 
-            if parent.children != 0:
+            self.delete_node_by_key(key, recursive=False)
+
+            if parent.num_children != 0:
                 return
 
             idx_end -= 1
 
 
-    def get_items_nodes(self, key):
-        try:
-            items = self.tree.items(key)
-        except:
-            items = []
-
-        return [item[1] for item in items]
-
-
-    def get_items(self, key):
-        try:
-            items = self.tree.items(key)
-        except:
-            items = []
-
-        return items
-
-
     def inorder_traversal(self):
-        return self.get_items_nodes(self.country_code)
+        return self.get_items_by_key_references(self.root_key)
+
+
+    # TODO: List expressions vs Readability?
+    def get_leaves_references(self):
+        nodes = self.get_items_by_key_references(self.root_key)
+        leaves = list()
+
+        for n in nodes:
+            if n.is_leaf():
+                leaves.append(n)
+
+        return leaves
 
 
     def serialize_tree(self):
-        nodes = self.get_items_nodes(self.country_code)
+        nodes = self.get_items_by_key_references(self.root_key)
         for n in nodes:
+            pass #TODO 
+
+
+    def load_data_from_csv(self, path, key_column, feature_columns=list(), score_column=None):
+        with open(path, 'r') as file:
+            csv_reader = csv.DictReader(file)
+            self.key_column = key_column
+            self.feature_columns = feature_columns
+
+            for row in csv_reader:
+                try:
+                    entry = [ row[key_column] ]
+                    entry += [ row[f] for f in feature_columns ]
+
+                    if score_column:
+                        entry.append(row[score_column])
+                    else:
+                        entry.append(0.0)
+
+                    self.data.append(entry)
+
+                except KeyError:
+                    logging.error("Please check your column names.")
+                    exit(1)
+
+
+    def load_data_from_list(self, data):
+        self.data = data
+
+
+    def build_tree(self):
+        for entry in self.data:
+            key = None 
+            features = None 
+            score = None
+            key = entry[0]
+            score = entry[-1]
+
+            if len(entry) == 2:
+                features = None
+            else:
+                features = entry[1:len(entry)-2]
             
+            self.insert_entry(key, features, score)
 
 
-if __name__ == '__main__':
-    t = Tree('LV', '371')
+    def clear_tree(self):
+        victims = self.inorder_traversal()
+        for v in victims:
+            if v.is_root:
+                continue
 
-    t.insert_phone_number('371243')
-    t.insert_phone_number('371244')
-    t.insert_phone_number('371255')
-    t.insert_phone_number('371256')
-    
-    print(t.get_items('371'), t.get_items('3712'))
-    t.delete_node_by_key('371243')
-    print(t.get_items('371'), t.get_items('3712'))
-    
-    nodes = t.inorder_traversal()
-
-    for node in nodes:
-        node.update_features()
-        node.calculate_score()
-        node.print_info()
-    
-
-    t.delete_node_by_key('371') # assertion should fail
+            self.delete_node_by_key(v.key)
 
